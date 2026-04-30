@@ -1,0 +1,114 @@
+    task.wait(customer.sessionTime)
+
+    -- Nếu khách đã bị kick sớm (máy hỏng), dừng lại
+    if customer.leftEarly then return end
+
+    -- ── Thanh toán & rời đi ───────────────────────────────
+    processPayment(customer, tier)
+    ComputerManager.Release(pc)
+    removeCustomer(customer.id)
+
+    print(string.format(
+        "[Customer] 🚶 Khách #%d rời tiệm. (Còn %d khách)",
+        customer.id, activeCount
+    ))
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  SPAWN
+-- ─────────────────────────────────────────────────────────────
+
+local function trySpawnCustomer()
+    if activeCount >= Config.MAX_CUSTOMERS then return end
+
+    local idlePCs = ComputerManager.GetIdlePCs()
+    if #idlePCs == 0 then return end  -- không có máy trống
+
+    -- Chọn máy ngẫu nhiên
+    local pc   = idlePCs[math.random(1, #idlePCs)]
+    local seat = pc:FindFirstChild(Config.SEAT_PART_NAME, true)
+    if not seat then
+        warn("[CustomerManager] Máy '" .. pc.Name .. "' thiếu Part '" .. Config.SEAT_PART_NAME .. "'!")
+        return
+    end
+
+    -- Đặt cờ Occupy trước để tránh 2 khách tranh cùng máy
+    local customer = newCustomer(pc, seat.CFrame)
+    local ok = ComputerManager.Occupy(pc, customer)
+    if not ok then
+        -- Máy bị chiếm mất trong lúc chọn
+        removeCustomer(customer.id)
+        return
+    end
+
+    activeCount += 1
+    task.spawn(runCustomerSession, customer)
+end
+
+local function spawnLoop()
+    while true do
+        task.wait(Config.SPAWN_INTERVAL)
+        trySpawnCustomer()
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  XỬ LÝ KHI MÁY HỎNG
+-- ─────────────────────────────────────────────────────────────
+
+--- Được gọi bởi ComputerManager khi máy hỏng giữa chừng
+local function onPCBroken(model, customer)
+    if not customers[customer.id] then return end
+    customer.leftEarly = true
+
+    -- Thanh toán theo thời gian đã dùng (tính partial)
+    local data = ComputerManager.GetData(model)
+    local tier = data and data.tier or 1
+    local earned = processPayment(customer, tier)
+
+    removeCustomer(customer.id)
+
+    print(string.format(
+        "[Customer] ⚡ Máy hỏng! Khách #%d rời sớm, thanh toán %d coins. (Còn %d khách)",
+        customer.id, earned, activeCount
+    ))
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  PUBLIC API
+-- ─────────────────────────────────────────────────────────────
+
+--- Khởi động CustomerManager
+--- @param moneyFn  function(amount: number)  hàm cộng tiền từ Main
+function CustomerManager.Init(moneyFn)
+    addMoneyFn = moneyFn
+
+    -- Đăng ký callback máy hỏng với ComputerManager
+    ComputerManager.SetOnBrokenCallback(onPCBroken)
+
+    -- Bắt đầu vòng lặp spawn
+    task.spawn(spawnLoop)
+
+    print("[CustomerManager] ✅ Đã khởi động. Spawn mỗi " .. Config.SPAWN_INTERVAL .. "s.")
+end
+
+--- Trả về số khách hiện tại (dùng cho analytics)
+function CustomerManager.GetActiveCount()
+    return activeCount
+end
+
+--- Snapshot toàn bộ khách đang trong tiệm
+function CustomerManager.GetAllCustomers()
+    local snapshot = {}
+    for id, c in pairs(customers) do
+        snapshot[id] = {
+            id          = c.id,
+            pcName      = c.pc and c.pc.Name or "N/A",
+            elapsed     = math.floor(tick() - c.startTime),
+            sessionTime = math.floor(c.sessionTime),
+        }
+    end
+    return snapshot
+end
+
+return CustomerManager
