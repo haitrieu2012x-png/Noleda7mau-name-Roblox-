@@ -1,0 +1,104 @@
+-- ==============================================================
+--  Main.server.lua  (Script)
+--  ServerScriptService/InternetCafe/Main
+--
+--  Entry point duy nhất. Khởi động toàn bộ hệ thống theo thứ tự:
+--    1. Leaderstats (Coins cho mỗi player)
+--    2. ComputerManager  →  đăng ký máy tính
+--    3. CustomerManager  →  bắt đầu spawn khách
+--    4. Analytics loop   →  log định kỳ
+-- ==============================================================
+
+local Players         = game:GetService("Players")
+local Config          = require(script.Parent.Config)
+local ComputerManager = require(script.Parent.ComputerManager)
+local CustomerManager = require(script.Parent.CustomerManager)
+
+-- ─────────────────────────────────────────────────────────────
+--  1. LEADERSTATS  (tạo cho mỗi player khi join)
+-- ─────────────────────────────────────────────────────────────
+
+local function setupLeaderstats(player)
+    local folder = Instance.new("Folder")
+    folder.Name  = "leaderstats"
+    folder.Parent = player
+
+    local coins      = Instance.new("IntValue")
+    coins.Name       = Config.CURRENCY_STAT
+    coins.Value      = 0
+    coins.Parent     = folder
+end
+
+Players.PlayerAdded:Connect(setupLeaderstats)
+
+-- Xử lý player đã vào trước khi script chạy (Studio test)
+for _, player in ipairs(Players:GetPlayers()) do
+    setupLeaderstats(player)
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  2. HÀM CỘNG TIỀN  (inject vào CustomerManager)
+-- ─────────────────────────────────────────────────────────────
+--
+--  Thiết kế: tiệm net là single-owner game nên cộng tiền cho
+--  player đầu tiên. Nếu muốn multi-owner thì truyền playerId
+--  qua customerData và tìm đúng player.
+-- ─────────────────────────────────────────────────────────────
+
+local function addMoney(amount)
+    if amount <= 0 then return end
+
+    -- Lấy owner đầu tiên (game solo) — dễ thay nếu cần multi-player
+    local players = Players:GetPlayers()
+    if #players == 0 then return end
+
+    local player   = players[1]
+    local stats    = player:FindFirstChild("leaderstats")
+    if not stats then return end
+
+    local coins    = stats:FindFirstChild(Config.CURRENCY_STAT)
+    if coins then
+        coins.Value += amount
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  3. KHỞI ĐỘNG HỆ THỐNG
+-- ─────────────────────────────────────────────────────────────
+
+-- Thứ tự quan trọng: Computer phải đăng ký xong trước khi Customer spawn
+ComputerManager.Init()
+CustomerManager.Init(addMoney)
+
+print("==============================================")
+print("  🖥  Internet Cafe Tycoon — Server Started  ")
+print("==============================================")
+
+-- ─────────────────────────────────────────────────────────────
+--  4. ANALYTICS LOOP  (log mỗi 60 giây — tuỳ chọn, bỏ cũng được)
+-- ─────────────────────────────────────────────────────────────
+
+task.spawn(function()
+    while true do
+        task.wait(60)
+
+        local pcStats  = ComputerManager.GetStats()
+        local custCount = CustomerManager.GetActiveCount()
+
+        local players  = Players:GetPlayers()
+        local totalCoins = 0
+        for _, p in ipairs(players) do
+            local s = p:FindFirstChild("leaderstats")
+            if s then
+                local c = s:FindFirstChild(Config.CURRENCY_STAT)
+                if c then totalCoins += c.Value end
+            end
+        end
+
+        print(string.format(
+            "[Analytics] 📊 Máy: %dIdle / %dInUse / %dBroken | Khách: %d | Coins: %d",
+            pcStats.Idle, pcStats.InUse, pcStats.Broken,
+            custCount, totalCoins
+        ))
+    end
+end)
