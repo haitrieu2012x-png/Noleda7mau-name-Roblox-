@@ -1,0 +1,228 @@
+-- ==============================================================
+--  ComputerManager.lua  (ModuleScript)
+--  ServerScriptService/InternetCafe/ComputerManager
+--
+--  Quản lý toàn bộ vòng đời máy tính:
+--    • Đăng ký máy từ Workspace
+--    • Theo dõi trạng thái: Idle / InUse / Broken
+--    • Random hỏng theo chu kỳ
+--    • Tự sửa sau Config.PC_REPAIR_TIME giây
+--    • Cung cấp API cho CustomerManager
+-- ==============================================================
+
+local ComputerManager = {}
+
+local Config = require(script.Parent.Config)
+
+-- ─────────────────────────────────────────────────────────────
+--  CONSTANTS
+-- ─────────────────────────────────────────────────────────────
+local STATUS = {
+    IDLE   = "Idle",
+    IN_USE = "InUse",
+    BROKEN = "Broken",
+}
+ComputerManager.STATUS = STATUS  -- export để module khác dùng
+
+-- ─────────────────────────────────────────────────────────────
+--  INTERNAL STATE
+-- ─────────────────────────────────────────────────────────────
+-- registry[model] = {
+--   status   : STATUS.*
+--   tier     : number  (1/2/3, dùng cho upgrade)
+--   occupant : table | nil  (customerData từ CustomerManager)
+-- }
+local registry = {}
+
+-- Signal callback: được gọi khi máy vừa bị hỏng (để CustomerManager biết)
+-- onBroken(model, occupant)
+local onBrokenCallback = nil
+
+-- ─────────────────────────────────────────────────────────────
+--  PRIVATE HELPERS
+-- ─────────────────────────────────────────────────────────────
+
+local function setScreenColor(model, color3)
+    local screen = model:FindFirstChild(Config.SCREEN_PART_NAME, true)
+    if screen and screen:IsA("BasePart") then
+        screen.Color = color3
+    end
+end
+
+local function applyVisual(model)
+    local data = registry[model]
+    if not data then return end
+    if data.status == STATUS.IDLE then
+        setScreenColor(model, Config.SCREEN_COLOR_IDLE)
+    elseif data.status == STATUS.IN_USE then
+        setScreenColor(model, Config.SCREEN_COLOR_INUSE)
+    elseif data.status == STATUS.BROKEN then
+        setScreenColor(model, Config.SCREEN_COLOR_BROKEN)
+    end
+end
+
+local function setStatus(model, newStatus)
+    local data = registry[model]
+    if not data then return end
+    data.status = newStatus
+    applyVisual(model)
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  REPAIR FLOW
+-- ─────────────────────────────────────────────────────────────
+
+local function beginRepair(model)
+    -- Nhân viên kỹ thuật ảo: đợi rồi sửa
+    task.delay(Config.PC_REPAIR_TIME, function()
+        local data = registry[model]
+        if not data then return end
+        if data.status == STATUS.BROKEN then
+            setStatus(model, STATUS.IDLE)
+            print(string.format(
+                "[ComputerManager] 🔧 Máy '%s' đã được sửa xong → Idle",
+                model.Name
+            ))
+        end
+    end)
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  BREAK CHECK LOOP
+-- ─────────────────────────────────────────────────────────────
+
+local function breakCheckLoop()
+    while true do
+        task.wait(Config.PC_BREAK_CHECK_INTERVAL)
+
+        for model, data in pairs(registry) do
+            -- Chỉ máy đang dùng mới có nguy cơ hỏng
+            if data.status == STATUS.IN_USE then
+                local tierData  = Config.PC_TIERS[data.tier] or Config.PC_TIERS[1]
+                local breakProb = Config.PC_BREAK_CHANCE * tierData.breakChanceMultiplier
+                local roll      = math.random()
+
+                if roll < breakProb then
+                    local occupant = data.occupant
+                    setStatus(model, STATUS.BROKEN)
+
+                    print(string.format(
+                        "[ComputerManager] 💥 Máy '%s' bị hỏng! (roll=%.2f < %.2f)",
+                        model.Name, roll, breakProb
+                    ))
+
+                    -- Thông báo cho CustomerManager xử lý khách đang ngồi
+                    if onBrokenCallback and occupant then
+                        onBrokenCallback(model, occupant)
+                    end
+
+                    beginRepair(model)
+                end
+            end
+        end
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
+--  PUBLIC API
+-- ─────────────────────────────────────────────────────────────
+
+--- Khởi tạo: đọc tất cả model trong Workspace/Computers
+function ComputerManager.Init()
+    local folder = workspace:FindFirstChild(Config.PC_FOLDER_NAME)
+    if not folder then
+        warn("[ComputerManager] ⚠ Không tìm thấy folder '"
+            .. Config.PC_FOLDER_NAME .. "' trong Workspace!")
+        return
+    end
+
+    local count = 0
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("Model") then
+            -- Đọc tier từ Attribute (đặt trong Studio), mặc định tier 1
+            local tier = child:GetAttribute("Tier") or 1
+            registry[child] = {
+                status   = STATUS.IDLE,
+                tier     = math.clamp(tier, 1, #Config.PC_TIERS),
+                occupant = nil,
+            }
+            applyVisual(child)
+            count += 1
+        end
+    end
+
+    print(string.format("[ComputerManager] ✅ Đã đăng ký %d máy tính.", count))
+    task.spawn(breakCheckLoop)
+end
+
+--- Đặt callback được gọi khi máy bị hỏng giữa chừng
+function ComputerManager.SetOnBrokenCallback(fn)
+    onBrokenCallback = fn
+end
+
+--- Trả về danh sách model máy đang Idle (có thể ngồi vào)
+function ComputerManager.GetIdlePCs()
+    local result = {}
+    for model, data in pairs(registry) do
+        if data.status == STATUS.IDLE then
+            result[#result + 1] = model
+        end
+    end
+    return result
+end
+
+--- Đánh dấu máy đang được khách ngồi
+--- @param model    Model
+--- @param customer table  (customerData)
+function ComputerManager.Occupy(model, customer)
+    local data = registry[model]
+    if not data then return false end
+    if data.status ~= STATUS.IDLE then return false end
+    data.occupant = customer
+    setStatus(model, STATUS.IN_USE)
+    return true
+end
+
+--- Giải phóng máy về Idle sau khi khách rời
+function ComputerManager.Release(model)
+    local data = registry[model]
+    if not data then return end
+    data.occupant = nil
+    if data.status == STATUS.IN_USE then
+        setStatus(model, STATUS.IDLE)
+    end
+end
+
+--- Lấy thông tin data của máy (dùng khi upgrade)
+function ComputerManager.GetData(model)
+    return registry[model]
+end
+
+--- Nâng tier máy (gọi từ hệ thống upgrade)
+function ComputerManager.UpgradeTier(model)
+    local data = registry[model]
+    if not data then return false end
+    if data.tier >= #Config.PC_TIERS then
+        print("[ComputerManager] Máy đã ở tier cao nhất.")
+        return false
+    end
+    data.tier += 1
+    print(string.format(
+        "[ComputerManager] ⬆ Máy '%s' nâng lên %s (Tier %d)",
+        model.Name,
+        Config.PC_TIERS[data.tier].label,
+        data.tier
+    ))
+    return true
+end
+
+--- Số máy theo từng trạng thái (dùng cho analytics/UI sau này)
+function ComputerManager.GetStats()
+    local stats = { Idle = 0, InUse = 0, Broken = 0 }
+    for _, data in pairs(registry) do
+        stats[data.status] = (stats[data.status] or 0) + 1
+    end
+    return stats
+end
+
+return ComputerManager
