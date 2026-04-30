@@ -1,0 +1,74 @@
+-- ==============================================================
+--  Config.lua  (ModuleScript)
+--  ServerScriptService/InternetCafe/Config
+--  Toàn bộ hằng số cấu hình tập trung tại đây.
+--  Muốn thay đổi balance/timing chỉ cần sửa file này.
+-- ==============================================================
+
+local Config = {}
+
+-- ─────────────────────────────────────────────────────────────
+--  KHÁCH NPC
+-- ─────────────────────────────────────────────────────────────
+Config.SPAWN_INTERVAL       = 12     -- (giây) tần suất spawn 1 khách mới
+Config.MAX_CUSTOMERS        = 20     -- số khách tối đa cùng lúc
+Config.MIN_SESSION_TIME     = 40     -- (giây) thời gian ngồi tối thiểu
+Config.MAX_SESSION_TIME     = 150    -- (giây) thời gian ngồi tối đa
+
+-- ─────────────────────────────────────────────────────────────
+--  THANH TOÁN
+-- ─────────────────────────────────────────────────────────────
+Config.PRICE_PER_SECOND     = 0.5   -- coins/giây ngồi (base, tăng khi upgrade máy)
+Config.TIP_CHANCE           = 0.20  -- 20% khách tip thêm khi rời đi
+Config.TIP_MIN              = 5
+Config.TIP_MAX              = 40
+
+-- ─────────────────────────────────────────────────────────────
+--  ĐỒ ĂN / UỐNG
+-- ─────────────────────────────────────────────────────────────
+Config.FOOD_ORDER_CHANCE    = 0.55  -- 55% khách sẽ gọi đồ
+Config.FOOD_DELIVERY_DELAY  = 1     -- (giây) độ trễ giả lập nhân viên mang đồ
+
+-- name: tên hiển thị | price: tiền cộng thêm | deliveryTime: giây nhân viên mang
+Config.FOOD_MENU = {
+    { name = "CocaCola", price = 10, deliveryTime = 5  },
+    { name = "Pepsi",    price = 10, deliveryTime = 5  },
+    { name = "Sting",    price = 12, deliveryTime = 6  },
+    { name = "RedBull",  price = 20, deliveryTime = 7  },
+    { name = "Pho",      price = 35, deliveryTime = 12 },
+    { name = "Bun",      price = 30, deliveryTime = 10 },
+}
+
+-- ─────────────────────────────────────────────────────────────
+--  MÁY TÍNH
+-- ─────────────────────────────────────────────────────────────
+-- Xác suất hỏng mỗi lần tick (mỗi 60 giây, chỉ khi đang InUse)
+Config.PC_BREAK_CHANCE      = 0.08  -- 8% / phút khi đang có người dùng
+Config.PC_REPAIR_TIME       = 18    -- (giây) nhân viên kỹ thuật sửa xong
+Config.PC_BREAK_CHECK_INTERVAL = 60 -- (giây) chu kỳ kiểm tra hỏng
+
+-- Tier máy: dùng để mở rộng sau (upgrade)
+-- multiplier nhân vào PRICE_PER_SECOND
+Config.PC_TIERS = {
+    [1] = { label = "Máy cũ",     priceMultiplier = 1.0, breakChanceMultiplier = 1.2 },
+    [2] = { label = "Máy thường", priceMultiplier = 1.5, breakChanceMultiplier = 1.0 },
+    [3] = { label = "Máy xịn",   priceMultiplier = 2.2, breakChanceMultiplier = 0.6 },
+}
+
+-- ─────────────────────────────────────────────────────────────
+--  WORKSPACE REFERENCES
+-- ─────────────────────────────────────────────────────────────
+Config.PC_FOLDER_NAME       = "Computers"   -- Folder trong Workspace chứa máy
+Config.SEAT_PART_NAME       = "Seat"        -- Part NPC sẽ teleport đến ngồi
+Config.SCREEN_PART_NAME     = "Screen"      -- Part đổi màu theo trạng thái
+
+Config.SCREEN_COLOR_IDLE    = Color3.fromRGB(20,  20,  20 )
+Config.SCREEN_COLOR_INUSE   = Color3.fromRGB(50,  200, 80 )
+Config.SCREEN_COLOR_BROKEN  = Color3.fromRGB(220, 50,  50 )
+
+-- ─────────────────────────────────────────────────────────────
+--  CURRENCY  (tên DataStore key / leaderstat)
+-- ─────────────────────────────────────────────────────────────
+Config.CURRENCY_STAT        = "Coins"  -- tên leaderstats value
+
+return Config
